@@ -1,0 +1,70 @@
+---
+- name: Install Docker on app servers
+  hosts: app
+  become: true
+  tasks:
+    - name: Update package cache and install dependencies
+      ansible.builtin.raw: |
+        if [ -f /etc/lsb-release ]; then
+          sudo apt update -y
+          sudo apt install apt-transport-https ca-certificates curl software-properties-common -y
+        else
+          sudo dnf install -y yum-utils device-mapper-persistent-data lvm2
+        fi
+
+    - name: Install Docker
+      ansible.builtin.raw: |
+        if [ -f /etc/lsb-release ]; then
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+          sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+          sudo apt update -y
+          sudo apt install docker-ce -y
+        else
+          sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+          sudo dnf install -y docker-ce docker-ce-cli containerd.io
+        fi
+
+    - name: Start Docker service
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+- name: Install PostgreSQL on database server
+  hosts: database
+  become: true
+  vars:
+    postgresql_version: "14"
+    postgresql_data_dir: "/var/lib/postgresql/data"
+  tasks:
+    - name: Update package cache (Ubuntu only)
+      ansible.builtin.apt:
+        update_cache: yes
+        when: ansible_os_family == "Debian"
+
+    - name: Install PostgreSQL
+      ansible.builtin.apt:
+        name: "postgresql-{{ postgresql_version }}"
+        state: present
+
+    - name: Stop PostgreSQL service
+      ansible.builtin.service:
+        name: postgresql
+        state: stopped
+
+    - name: Configure PostgreSQL data directory
+      ansible.builtin.shell: |
+        mkdir -p {{ postgresql_data_dir }}
+        chown postgres:postgres {{ postgresql_data_dir }}
+
+    - name: Update PostgreSQL configuration
+      ansible.builtin.lineinfile:
+        path: "/etc/postgresql/{{ postgresql_version }}/main/postgresql.conf"
+        regexp: '^#?data_directory ='
+        line: "data_directory = '{{ postgresql_data_dir }}'"
+
+    - name: Start PostgreSQL service
+      ansible.builtin.service:
+        name: postgresql
+        state: started
+        enabled: true
